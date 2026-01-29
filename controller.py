@@ -78,6 +78,7 @@ def replace_vars_in_object(obj, vars_dict):
         return obj
 
 def do_pre_requests(pre_requests, global_config, global_vars):
+    # [修复] 移除局部 new_vars，直接操作 global_vars 以支持前置请求间的链式变量依赖
     for pre in pre_requests:
         pre_url = pre.get("url")
         if not pre_url:
@@ -115,11 +116,11 @@ def do_pre_requests(pre_requests, global_config, global_vars):
                     if val is None:  # 如果提取变量失败
                         print(f"[ERROR] 前置请求 [{pre.get('name', '')}] 提取变量 {var_name} 失败")
                         return None
-                    global_vars[var_name] = val
+                    global_vars[var_name] = val  # [修复] 变量直接存入全局池，供后续链式请求读取
         except Exception as e:
             print(f"[ERROR] 前置请求 [{pre.get('name', '')}] 失败:", e)
             return None
-    return global_vars
+    return global_vars  # [修复] 返回全量变量池
 
 def do_post_requests(post_requests, global_config, global_vars):
     for post in post_requests:
@@ -169,7 +170,7 @@ def do_post_requests(post_requests, global_config, global_vars):
             if "extract" in post:
                 for var_name, rule in post["extract"].items():
                     val = extract_value(resp, rule)
-                    global_vars[var_name] = val
+                    global_vars[var_name] = val  # [修复] 变量直接存入全局池，供后续链式请求读取
         except Exception as e:
             print(f"后置请求 [{post.get('name', '')}] 失败:", e)
 
@@ -181,7 +182,7 @@ def run_k6(ep, global_config, global_vars):
     final_headers = {}
     if ep.get("headers"):
         final_headers = ep["headers"].copy()
-    if "Authorization" not in final_headers and global_config.get("global_token") and global_config.get("global_token").lower() != "none":
+    if "Authorization" not in final_headers and global_config.get("global_token") and global_config.get("global_token").lower() != "none":  # [增强] 支持 "none" 字符串显式跳过全局 Token
         final_headers["Authorization"] = global_config["global_token"]
     final_headers = replace_vars_in_object(final_headers, global_vars)
     
@@ -222,9 +223,9 @@ def gather_results_and_print_report(endpoints, global_config, global_vars, test_
         metrics = summary_data.get("metrics", {})
         state = summary_data.get("state", {})
 
-        current_reqs = metrics["http_reqs"]["values"]["count"]
+        current_reqs = metrics["http_reqs"]["values"]["count"]  # [修复] 变量重命名，避免与外部统计变量 total_requests 同名导致冲突
         success_count = metrics["http_req_failed"]["values"]["fails"]
-        fail_count = current_reqs - success_count
+        fail_count = current_reqs - success_count  # [修复] 使用重命名后的变量计算失败数
         test_duration_sec = state.get("testRunDurationMs", 30000) / 1000  # 默认 30s
         real_qps = success_count / test_duration_sec if test_duration_sec > 0 else 0
 
@@ -251,7 +252,7 @@ def gather_results_and_print_report(endpoints, global_config, global_vars, test_
         
         # 累加总数据
         total_success += success_count
-        total_requests += current_reqs
+        total_requests += current_reqs  # [修复] 累加每个接口的实际请求数，修正全局 Success Rate 统计 Bug
     
     # 计算全局成功率
     global_success_rate = (total_success / total_requests * 100) if total_requests > 0 else 0
